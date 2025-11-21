@@ -1,1 +1,183 @@
 
+import pandas as pd
+import scipy.integrate
+import numpy as np
+import matplotlib.pyplot
+
+# L длинна пластины
+# q - Ньютон / метр - нагрузка на пластину в точках
+# E Модулю юнга пластины
+# I Момент инерции пластины вдоль искривления
+# nu - масса еденицы длины пластины
+
+
+class Static_Bernoulli():
+
+    def __init__(self, l, N_x, E, I, q):
+        self.L = l
+        self.N_x = N_x
+        self.E = E
+        self.I = I
+        self.q = q
+        self.dx = self.L / (self.N_x - 1)
+
+        self.x = np.linspace(0, l, self.N_x)
+
+        self.Y0 = np.zeros((4))
+        # 4 мерный массив, содержит значения кривизны и её производных в каждой точке
+        self.result = None
+        # Значение кривизны в каждой точке, одномерный массив
+        self.w = np.zeros((self.N_x))
+
+    def calculete(self, Y, x):
+        """
+        Функция определяет дифференциальное уравнение для статического уравнения Эйлера - Бернулли
+        """
+        w, u1, u2, u3 = Y
+
+        return [u1, u2, u3, self.q / (self.E * self.I)]
+
+    def Solve(self):
+        '''
+        Записывает результат дифференциального уравнения в ячейку объекта self.result
+        Записывает значения прогиба в одномерный массив self.w
+        '''
+        self.result = scipy.integrate.odeint(
+            self.calculete, self.Y0, self.x)
+
+        for i in range(self.N_x):
+            self.w[i] = self.result[i][0]
+
+    def Get_render(self):
+        """
+        Выводит график значений координаты от высоты для каждой точки пластины
+        """
+        array = np.zeros((2 * self.N_x))
+        array[:self.N_x] = self.w
+
+        for i in range(self.N_x - 1):  # Пересчёт координаты x
+            array[self.N_x + i + 1] = array[self.N_x + i] + \
+                np.sqrt(np.abs(self.dx ** 2 - (array[i + 1] - array[i]) ** 2))
+
+        matplotlib.pyplot.plot(
+            array[self.N_x:], array[:self.N_x], 'b-', linewidth=2)
+        matplotlib.pyplot.show()
+
+
+# Динамическое решение дифференциального уравнения dw2/dt2 = EI/nu dw4/dx4 + q/nu; q = 0 для свободных колебаний
+class Euler_Bernoulli_Dinamic():
+
+    def __init__(self, l, N_t, N_x, T, E, I, nu, q):
+        self.L = l
+        self.N_t = N_t
+        self.N_x = N_x
+        self.E = E
+        self.I = I
+        self.nu = nu
+        self.q = q
+        self.T = T
+
+        self.dx = self.L / (self.N_x - 1)
+        self.t = np.linspace(0, self.T, self.N_t)
+
+        # Первое значение - кривизна w второе производная кривизны dwdt
+        self.Y0 = np.zeros((2 * N_x))
+        self.result = None
+
+    def Euler_Equation(self, Y, t):
+        """
+        Уравнение используемое функци odeit для определения дифференциального уравнения
+        Функция принимает Y - двумерный массив
+        Y[0] - массив кривизны в точке, длинной N_x
+        Y[1] - массив первой производной кривизны в точке, длинной N_x
+        t - свободный аргумент, время по которому проводится решение
+        N_x - количество точек пластины, по которым проводится решение
+        dx - расстояние между точками пластины
+        E - модуль юнга
+        I - момент инерции пластины в продольном направлении
+        nu - масса на еденицу длинны, линейная плотность пластины
+        """
+        dx = self.dx
+        E = self.E
+        I = self.I
+        nu = self.nu
+        q = self.q
+
+        w = Y[:self.N_x]
+        dwdt = Y[self.N_x:]
+        w[self.N_x - 1] = w[self.N_x - 3]
+        w[self.N_x - 2] = w[self.N_x - 2]
+        result = np.zeros((2 * self.N_x))
+        result[:self.N_x] = dwdt  # cкорость изменения прогиба
+
+        dw2dt2 = np.zeros((self.N_x))  # кривизна точек
+
+        for i in range(2, self.N_x - 2):
+
+            # пересчёт четвёртой производной приближенным методом
+            d4w_dx4 = (w[i-2] - 4*w[i-1] + 6*w[i] - 4*w[i+1] + w[i+2]) / dx**4
+
+            dw2dt2[i] = -E * I / nu * d4w_dx4 - q / nu
+
+        # Граничные условия для них не может быть посчитана 4 производная
+        dw2dt2[0] = 0
+        dw2dt2[1] = 0
+        dw2dt2[self.N_x - 1] = 0
+        dw2dt2[self.N_x - 2] = 0
+
+        result[self.N_x:] = dw2dt2
+
+        return result
+
+    def solve(self):
+        """
+        Решает дифференциальное уравнение, возвращает массивы значания кривизны в точках.
+        """
+
+        result = scipy.integrate.odeint(
+            self.Euler_Equation, self.Y0, self.t, mxstep=100000, rtol=1e-8, atol=1e-10)
+
+        self.result = result
+
+    def Get_y_x(self, index):
+        """
+        Выполняет функцию для index значения времени
+        Пересчитывает высоту точки через кривизну предыдущех точек
+        Возвращает зависимость высоты точки от координаты
+        """
+
+        array = np.zeros((2 * self.N_x))
+        array[:self.N_x] = self.result[index][:self.N_x]  # Y координата
+
+        for i in range(self.N_x - 2):  # Пересчёт координаты x
+
+            array[self.N_x + i + 1] = array[self.N_x + i] + \
+                np.sqrt(np.abs(self.dx ** 2 - (array[i + 1] - array[i]) ** 2))
+
+        return array
+
+    def Get_render(self, index):
+        """
+        Выводит визуализацию решения дифференциального уравнения для index значения времени
+        """
+        array = self.Get_y_x(index)
+        leng = self.N_x - 2
+        y = array[:leng]
+        x = array[self.N_x:]
+        x = x[:leng]
+        matplotlib.pyplot.plot(
+            x, y, 'b-', linewidth=2)
+        matplotlib.pyplot.show()
+
+
+Static_Test = Static_Bernoulli(1, 100, 1, 1, 10)
+
+Static_Test.Solve()
+# Static_Test.Get_render() # Визуализация
+
+Test = Euler_Bernoulli_Dinamic(1, 1000, 100, 0.1, 1, 1, 100, 0)
+Test.Y0[:Test.N_x] = Static_Test.w
+
+Test.solve()
+for i in range(0, 1000, 50):
+    Test.Get_render(i)
